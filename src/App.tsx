@@ -21,7 +21,7 @@ function App() {
   const [state, setState] = useState<JsonState>({
     url: '',
     currentData: null,
-    versions: [],
+    versionsByURL: {},
     apiKey: '',
   });
   const [showDiff, setShowDiff] = useState(false);
@@ -35,6 +35,10 @@ function App() {
       setState(prev => ({ ...prev, apiKey, url }));
     }
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('versionsByURL', JSON.stringify(state.versionsByURL));
+  }, [state.versionsByURL]);
 
   const saveSettingsToFile = () => {
     const settings = {
@@ -52,18 +56,35 @@ function App() {
 
   const fetchJson = async () => {
     try {
-      const response = await axios.get(state.url);
+      // Extract the API key from the URL
+      const urlParams = new URLSearchParams(new URL(state.url).search);
+      const apiKeyFromUrl = urlParams.get('apiKey');
+      const apiUrl = state.url.split('?')[0]; // Remove query parameters for the fetch request
+
+      const response = await axios.get(apiUrl, {
+        params: {
+          apiKey: apiKeyFromUrl || state.apiKey,
+        },
+      });
+
       const newVersion: JsonVersion = {
         timestamp: new Date().toISOString(),
         data: response.data,
       };
+
+      // Check if the URL already exists in versionsByURL
+      const currentVersions = state.versionsByURL[state.url] || [];
       
       setState(prev => ({
         ...prev,
         currentData: response.data,
-        versions: [newVersion, ...prev.versions],
+        versionsByURL: {
+          ...prev.versionsByURL,
+          [state.url]: [newVersion, ...currentVersions],
+        },
+        apiKey: apiKeyFromUrl || state.apiKey,
       }));
-      
+
       toast.success('JSON loaded successfully');
       saveSettingsToFile();
     } catch (error) {
@@ -73,17 +94,34 @@ function App() {
 
   const updateJson = async () => {
     try {
-      await axios.put(`${state.url}?apiKey=${state.apiKey}`, state.currentData);
+      // Extract the API key from the URL
+      const urlParams = new URLSearchParams(new URL(state.url).search);
+      const apiKeyFromUrl = urlParams.get('apiKey');
+      const apiUrl = state.url.split('?')[0]; // Remove query parameters for the fetch request
+
+      await axios.put(apiUrl, state.currentData, {
+        params: {
+          apiKey: apiKeyFromUrl || state.apiKey,
+        },
+      });
+
       const newVersion: JsonVersion = {
         timestamp: new Date().toISOString(),
         data: state.currentData,
       };
+
+      // Get current versions for the URL
+      const currentVersions = state.versionsByURL[state.url] || [];
       
       setState(prev => ({
         ...prev,
-        versions: [newVersion, ...prev.versions],
+        versionsByURL: {
+          ...prev.versionsByURL,
+          [state.url]: [newVersion, ...currentVersions],
+        },
+        apiKey: apiKeyFromUrl || state.apiKey,
       }));
-      
+
       toast.success('JSON updated successfully');
     } catch (error) {
       toast.error('Failed to update JSON');
@@ -224,7 +262,7 @@ function App() {
                 </div>
 
                 <div className="space-y-4">
-                  {state.versions.map((version, index) => (
+                  {(state.versionsByURL[state.url] || []).map((version, index) => (
                     <div
                       key={version.timestamp}
                       className={`border rounded-lg p-4 hover:bg-gray-50 transition-colors ${
@@ -255,7 +293,7 @@ function App() {
                        index === Math.min(...selectedVersions.filter((v): v is number => v !== null)) && (
                         <div className="mt-4">
                           <ReactDiffViewer
-                            oldValue={JSON.stringify(state.versions[Math.max(...selectedVersions.filter((v): v is number => v !== null))].data, null, 2)}
+                            oldValue={JSON.stringify(state.versionsByURL[state.url][Math.max(...selectedVersions.filter((v): v is number => v !== null))].data, null, 2)}
                             newValue={JSON.stringify(version.data, null, 2)}
                             splitView={true}
                             hideLineNumbers={true}
