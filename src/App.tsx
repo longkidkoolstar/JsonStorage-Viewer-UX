@@ -51,11 +51,20 @@ function App() {
       const { apiKey, url } = JSON.parse(savedSettings);
       setState(prev => ({ ...prev, apiKey, url }));
     }
-
+    
     // Load saved storages
     const savedStoragesData = localStorage.getItem('savedStorages');
     if (savedStoragesData) {
       setSavedStorages(JSON.parse(savedStoragesData));
+    }
+    
+    // Load version history
+    const savedVersionsData = localStorage.getItem('versionsByURL');
+    if (savedVersionsData) {
+      setState(prev => ({
+        ...prev,
+        versionsByURL: JSON.parse(savedVersionsData)
+      }));
     }
   }, []);
 
