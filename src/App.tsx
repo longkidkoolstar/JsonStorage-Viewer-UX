@@ -13,9 +13,22 @@ import {
   Clock,
   Edit3,
   GitCompare,
+  Bookmark,
+  X,
+  Folder,
+  Edit,
+  Trash,
 } from 'lucide-react';
 import axios from 'axios';
 import { JsonState, JsonVersion } from './types';
+
+// Interface for saved storage items
+interface SavedStorage {
+  id: string;
+  name: string;
+  url: string;
+  lastAccessed: string;
+}
 
 function App() {
   const [state, setState] = useState<JsonState>({
@@ -27,6 +40,10 @@ function App() {
   const [showDiff, setShowDiff] = useState(false);
   const [selectedVersions, setSelectedVersions] = useState<[number | null, number | null]>([null, null]);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [savedStorages, setSavedStorages] = useState<SavedStorage[]>([]);
+  const [showSavedStorages, setShowSavedStorages] = useState(false);
+  const [storageName, setStorageName] = useState('');
+  const [editingStorage, setEditingStorage] = useState<SavedStorage | null>(null);
 
   useEffect(() => {
     const savedSettings = localStorage.getItem('settings');
@@ -34,11 +51,21 @@ function App() {
       const { apiKey, url } = JSON.parse(savedSettings);
       setState(prev => ({ ...prev, apiKey, url }));
     }
+
+    // Load saved storages
+    const savedStoragesData = localStorage.getItem('savedStorages');
+    if (savedStoragesData) {
+      setSavedStorages(JSON.parse(savedStoragesData));
+    }
   }, []);
 
   useEffect(() => {
     localStorage.setItem('versionsByURL', JSON.stringify(state.versionsByURL));
   }, [state.versionsByURL]);
+  
+  useEffect(() => {
+    localStorage.setItem('savedStorages', JSON.stringify(savedStorages));
+  }, [savedStorages]);
 
   const saveSettingsToFile = () => {
     const settings = {
@@ -156,14 +183,83 @@ function App() {
     setShowDiff(false);
   };
 
+  const saveCurrentStorage = () => {
+    if (!state.url) {
+      toast.error("Please enter a URL first");
+      return;
+    }
+
+    if (!storageName) {
+      toast.error("Please enter a name for this storage");
+      return;
+    }
+
+    if (editingStorage) {
+      // Update existing storage
+      setSavedStorages(prev => 
+        prev.map(storage => 
+          storage.id === editingStorage.id 
+            ? { ...storage, name: storageName, lastAccessed: new Date().toISOString() } 
+            : storage
+        )
+      );
+      setEditingStorage(null);
+      toast.success('Storage updated successfully');
+    } else {
+      // Create new storage entry
+      const newStorage: SavedStorage = {
+        id: Date.now().toString(),
+        name: storageName,
+        url: state.url,
+        lastAccessed: new Date().toISOString(),
+      };
+      
+      setSavedStorages(prev => [...prev, newStorage]);
+      toast.success('Storage saved successfully');
+    }
+    
+    setStorageName('');
+  };
+
+  const loadStorage = (storage: SavedStorage) => {
+    setState(prev => ({
+      ...prev,
+      url: storage.url,
+    }));
+    
+    // Update lastAccessed timestamp
+    setSavedStorages(prev => 
+      prev.map(item => 
+        item.id === storage.id 
+          ? { ...item, lastAccessed: new Date().toISOString() } 
+          : item
+      )
+    );
+    
+    setShowSavedStorages(false);
+    
+    // Fetch the data automatically when a saved storage is selected
+    setTimeout(() => fetchJson(), 100);
+  };
+
+  const deleteStorage = (id: string) => {
+    setSavedStorages(prev => prev.filter(storage => storage.id !== id));
+    toast.success('Storage deleted');
+  };
+
+  const editStorage = (storage: SavedStorage) => {
+    setStorageName(storage.name);
+    setEditingStorage(storage);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
           <h1 className="text-3xl font-bold text-gray-800 mb-6">JSON Storage Viewer</h1>
           
-          <div className="flex gap-4 mb-6">
-            <div className="flex-1">
+          <div className="flex gap-4 mb-6 flex-wrap">
+            <div className="flex-1 min-w-[300px]">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 JSON URL
               </label>
@@ -207,7 +303,104 @@ function App() {
                 </button>
               </div>
             </div>
+            
+            <div className="w-full sm:w-auto">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Saved Storages
+              </label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowSavedStorages(!showSavedStorages)}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 flex items-center gap-2"
+                >
+                  <Folder size={16} />
+                  {showSavedStorages ? 'Hide Storages' : 'Show Storages'}
+                </button>
+              </div>
+            </div>
           </div>
+          
+          {showSavedStorages && (
+            <div className="mb-6 border rounded-lg p-4 bg-gray-50">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-semibold text-gray-800">Saved Storages</h2>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    value={storageName}
+                    onChange={(e) => setStorageName(e.target.value)}
+                    className="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    placeholder={editingStorage ? "Edit storage name..." : "Name this storage..."}
+                  />
+                  <button
+                    onClick={saveCurrentStorage}
+                    className="px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
+                  >
+                    <Bookmark size={14} />
+                    {editingStorage ? 'Update' : 'Save'}
+                  </button>
+                  {editingStorage && (
+                    <button
+                      onClick={() => {
+                        setEditingStorage(null);
+                        setStorageName('');
+                      }}
+                      className="px-3 py-1 bg-gray-500 text-white rounded-md hover:bg-gray-600 flex items-center gap-1"
+                    >
+                      <X size={14} />
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              {savedStorages.length === 0 ? (
+                <p className="text-gray-500 italic">No saved storages yet. Save one to get started!</p>
+              ) : (
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {savedStorages
+                    .sort((a, b) => new Date(b.lastAccessed).getTime() - new Date(a.lastAccessed).getTime())
+                    .map((storage) => (
+                    <div 
+                      key={storage.id} 
+                      className="flex items-center justify-between p-3 bg-white rounded-md border hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium text-gray-900 truncate">{storage.name}</h3>
+                        <p className="text-sm text-gray-500 truncate">{storage.url}</p>
+                        <p className="text-xs text-gray-400">
+                          Last accessed: {new Date(storage.lastAccessed).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex gap-1 ml-2">
+                        <button
+                          onClick={() => loadStorage(storage)}
+                          className="p-1 text-indigo-600 hover:text-indigo-800 rounded-md"
+                          title="Load this storage"
+                        >
+                          <RefreshCw size={16} />
+                        </button>
+                        <button
+                          onClick={() => editStorage(storage)}
+                          className="p-1 text-amber-600 hover:text-amber-800 rounded-md"
+                          title="Edit storage name"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button
+                          onClick={() => deleteStorage(storage.id)}
+                          className="p-1 text-red-600 hover:text-red-800 rounded-md"
+                          title="Delete this storage"
+                        >
+                          <Trash size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {state.currentData && (
             <div className="space-y-6">
