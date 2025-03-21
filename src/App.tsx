@@ -90,6 +90,11 @@ function App() {
     }
   };
 
+  // Helper function to check if two JSON objects are equal
+  const areJsonEqual = (json1: any, json2: any): boolean => {
+    return JSON.stringify(json1) === JSON.stringify(json2);
+  };
+
   const fetchJson = async () => {
     try {
       // Extract the API key from the URL
@@ -103,25 +108,38 @@ function App() {
         },
       });
 
-      const newVersion: JsonVersion = {
-        timestamp: new Date().toISOString(),
-        data: response.data,
-      };
-
-      // Check if the URL already exists in versionsByURL
+      // Get current versions for the URL
       const currentVersions = state.versionsByURL[state.url] || [];
       
-      setState(prev => ({
-        ...prev,
-        currentData: response.data,
-        versionsByURL: {
-          ...prev.versionsByURL,
-          [state.url]: [newVersion, ...currentVersions],
-        },
-        apiKey: apiKeyFromUrl || state.apiKey,
-      }));
-
-      toast.success('JSON loaded successfully');
+      // Check if the received data is the same as the most recent version
+      const isDataUnchanged = currentVersions.length > 0 && 
+                             areJsonEqual(response.data, currentVersions[0].data);
+      
+      if (isDataUnchanged) {
+        setState(prev => ({
+          ...prev,
+          currentData: response.data,
+          apiKey: apiKeyFromUrl || state.apiKey,
+        }));
+        toast.success('JSON loaded successfully (no changes detected)');
+      } else {
+        const newVersion: JsonVersion = {
+          timestamp: new Date().toISOString(),
+          data: response.data,
+        };
+        
+        setState(prev => ({
+          ...prev,
+          currentData: response.data,
+          versionsByURL: {
+            ...prev.versionsByURL,
+            [state.url]: [newVersion, ...currentVersions],
+          },
+          apiKey: apiKeyFromUrl || state.apiKey,
+        }));
+        toast.success('JSON loaded successfully');
+      }
+      
       saveSettingsToFile();
     } catch (error) {
       toast.error('Failed to fetch JSON');
@@ -141,24 +159,31 @@ function App() {
         },
       });
 
-      const newVersion: JsonVersion = {
-        timestamp: new Date().toISOString(),
-        data: state.currentData,
-      };
-
       // Get current versions for the URL
       const currentVersions = state.versionsByURL[state.url] || [];
       
-      setState(prev => ({
-        ...prev,
-        versionsByURL: {
-          ...prev.versionsByURL,
-          [state.url]: [newVersion, ...currentVersions],
-        },
-        apiKey: apiKeyFromUrl || state.apiKey,
-      }));
-
-      toast.success('JSON updated successfully');
+      // Check if the current data is the same as the most recent version
+      const isDataUnchanged = currentVersions.length > 0 && 
+                             areJsonEqual(state.currentData, currentVersions[0].data);
+      
+      if (isDataUnchanged) {
+        toast.success('JSON updated successfully (no changes to version history)');
+      } else {
+        const newVersion: JsonVersion = {
+          timestamp: new Date().toISOString(),
+          data: state.currentData,
+        };
+        
+        setState(prev => ({
+          ...prev,
+          versionsByURL: {
+            ...prev.versionsByURL,
+            [state.url]: [newVersion, ...currentVersions],
+          },
+          apiKey: apiKeyFromUrl || state.apiKey,
+        }));
+        toast.success('JSON updated successfully');
+      }
     } catch (error) {
       toast.error('Failed to update JSON');
     }
