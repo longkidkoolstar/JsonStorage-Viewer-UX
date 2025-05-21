@@ -6,6 +6,8 @@ export interface JsonVersion {
 export interface JsonState {
   url: string;
   currentData: any;
-  versions: JsonVersion[];
+  versionsByURL: {
+    [url: string]: JsonVersion[];
+  };
   apiKey: string;
 }
