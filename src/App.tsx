@@ -15,9 +15,14 @@ import {
   Folder,
   Edit,
   Trash,
+  Cloud,
 } from 'lucide-react';
 import axios from 'axios';
 import { JsonState, JsonVersion } from './types';
+import { auth, db } from './firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { collection, doc, setDoc, getDoc, getDocs, query, where, deleteDoc } from 'firebase/firestore';
+import Auth from './components/Auth';
 
 // Interface for saved storage items
 interface SavedStorage {
@@ -43,6 +48,8 @@ function App() {
   const [editingStorage, setEditingStorage] = useState<SavedStorage | null>(null);
   const [activeStorageId, setActiveStorageId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [cloudSyncEnabled, setCloudSyncEnabled] = useState(false);
 
   useEffect(() => {
     const savedSettings = localStorage.getItem('settings');
@@ -65,15 +72,133 @@ function App() {
         versionsByURL: JSON.parse(savedVersionsData)
       }));
     }
+    
+    // Set up Firebase auth listener
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      if (user) {
+        loadUserData(user.uid);
+        setCloudSyncEnabled(true);
+      }
+    });
+    
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
     localStorage.setItem('versionsByURL', JSON.stringify(state.versionsByURL));
-  }, [state.versionsByURL]);
+    
+    // Sync to cloud if user is logged in and cloud sync is enabled
+    if (currentUser && cloudSyncEnabled) {
+      syncVersionsToCloud();
+    }
+  }, [state.versionsByURL, currentUser, cloudSyncEnabled]);
 
   useEffect(() => {
     localStorage.setItem('savedStorages', JSON.stringify(savedStorages));
-  }, [savedStorages]);
+    
+    // Sync to cloud if user is logged in and cloud sync is enabled
+    if (currentUser && cloudSyncEnabled) {
+      syncStoragesToCloud();
+    }
+  }, [savedStorages, currentUser, cloudSyncEnabled]);
+  
+  // Load user data from Firestore
+  const loadUserData = async (userId: string) => {
+    try {
+      // Load user's saved storages
+      const storagesQuery = collection(db, 'users', userId, 'storages');
+      const storagesSnapshot = await getDocs(storagesQuery);
+      
+      if (!storagesSnapshot.empty) {
+        const cloudStorages = storagesSnapshot.docs.map(doc => doc.data() as SavedStorage);
+        
+        // Merge with local storages, preferring cloud versions
+        const mergedStorages = mergeStorages(savedStorages, cloudStorages);
+        setSavedStorages(mergedStorages);
+      }
+      
+      // Load user's version history
+      const versionsDoc = await getDoc(doc(db, 'users', userId, 'versions', 'versionsByURL'));
+      if (versionsDoc.exists()) {
+        const cloudVersions = versionsDoc.data().versions;
+        
+        // Merge with local versions, preferring cloud versions
+        const mergedVersions = mergeVersions(state.versionsByURL, cloudVersions);
+        setState(prev => ({
+          ...prev,
+          versionsByURL: mergedVersions
+        }));
+      }
+      
+      toast.success('Cloud data loaded successfully');
+    } catch (error) {
+      console.error('Error loading user data:', error);
+      toast.error('Failed to load cloud data');
+    }
+  };
+
+  // Merge local and cloud storages
+  const mergeStorages = (localStorages: SavedStorage[], cloudStorages: SavedStorage[]): SavedStorage[] => {
+    const storageMap = new Map<string, SavedStorage>();
+    
+    // Add local storages to map
+    localStorages.forEach(storage => {
+      storageMap.set(storage.id, storage);
+    });
+    
+    // Override with cloud storages
+    cloudStorages.forEach(storage => {
+      storageMap.set(storage.id, storage);
+    });
+    
+    return Array.from(storageMap.values());
+  };
+
+  // Merge local and cloud versions
+  const mergeVersions = (localVersions: Record<string, JsonVersion[]>, cloudVersions: Record<string, JsonVersion[]>): Record<string, JsonVersion[]> => {
+    const result = { ...localVersions };
+    
+    // Override with cloud versions
+    for (const [url, versions] of Object.entries(cloudVersions)) {
+      result[url] = versions;
+    }
+    
+    return result;
+  };
+
+  // Sync saved storages to cloud
+  const syncStoragesToCloud = async () => {
+    if (!currentUser) return;
+    
+    try {
+      // Add userId to each storage
+      const storagesWithUserId = savedStorages.map(storage => ({
+        ...storage,
+        userId: currentUser.uid
+      }));
+      
+      // Save each storage to Firestore
+      for (const storage of storagesWithUserId) {
+        await setDoc(doc(db, 'users', currentUser.uid, 'storages', storage.id), storage);
+      }
+    } catch (error) {
+      console.error('Error syncing storages to cloud:', error);
+    }
+  };
+
+  // Sync version history to cloud
+  const syncVersionsToCloud = async () => {
+    if (!currentUser) return;
+    
+    try {
+      await setDoc(doc(db, 'users', currentUser.uid, 'versions', 'versionsByURL'), {
+        versions: state.versionsByURL
+      });
+    } catch (error) {
+      console.error('Error syncing versions to cloud:', error);
+    }
+  };
 
   const saveSettingsToFile = () => {
     const settings = {
@@ -432,7 +557,25 @@ function App() {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
-          <h1 className="text-3xl font-bold text-gray-800 mb-6">JSON Storage Viewer</h1>
+          <div className="flex justify-between items-center mb-6">
+            <h1 className="text-3xl font-bold text-gray-800">JSON Storage Viewer</h1>
+            <div className="flex items-center gap-4">
+              <Auth currentUser={currentUser} />
+              
+              {currentUser && (
+                <button
+                  onClick={() => setCloudSyncEnabled(!cloudSyncEnabled)}
+                  className={`flex items-center gap-1 px-3 py-1 rounded text-white ${
+                    cloudSyncEnabled ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-500 hover:bg-gray-600'
+                  }`}
+                  title={cloudSyncEnabled ? 'Cloud sync enabled' : 'Cloud sync disabled'}
+                >
+                  <Cloud size={16} />
+                  {cloudSyncEnabled ? 'Sync On' : 'Sync Off'}
+                </button>
+              )}
+            </div>
+          </div>
 
           <div className="flex gap-4 mb-6 flex-wrap">
             <div className="flex-1 min-w-[300px]">
