@@ -524,7 +524,7 @@ function App() {
     }
   };
 
-  const deleteStorage = (id: string) => {
+  const deleteStorage = async (id: string) => {
     // Don't allow deletion while loading
     if (isLoading) {
       return;
@@ -539,7 +539,19 @@ function App() {
       setActiveStorageId(null);
     }
 
+    // Remove locally
     setSavedStorages(prev => prev.filter(storage => storage.id !== id));
+
+    // Also delete from Firestore if logged in and cloud sync is enabled
+    if (currentUser && cloudSyncEnabled) {
+      try {
+        await deleteDoc(doc(db, 'users', currentUser.uid, 'storages', id));
+      } catch (error) {
+        console.error('Error deleting storage from cloud:', error);
+        toast.error('Failed to delete storage from cloud');
+      }
+    }
+
     toast.success('Storage deleted');
   };
 
