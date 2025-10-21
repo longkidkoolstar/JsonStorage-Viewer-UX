@@ -384,6 +384,92 @@ function App() {
     setShowDiff(false);
   };
 
+  // Add ability to revert to a previous version
+  const revertToVersion = async (index: number) => {
+    if (isLoading) {
+      toast.error('Please wait for the current operation to complete');
+      return;
+    }
+
+    const versions = state.versionsByURL[state.url] || [];
+    const target = versions[index];
+    if (!target) {
+      toast.error('Selected version not found');
+      return;
+    }
+
+    if (!window.confirm('Revert current storage to this version? This will overwrite remote data.')) {
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      // Extract the API key from the URL
+      const urlParams = new URLSearchParams(new URL(state.url).search);
+      const apiKeyFromUrl = urlParams.get('apiKey');
+      const apiUrl = state.url.split('?')[0];
+
+      // Verify that we're updating the correct storage
+      const matchingStorage = savedStorages.find(storage => storage.url === state.url);
+      if (matchingStorage && matchingStorage.id !== activeStorageId) {
+        if (!window.confirm('The displayed data may not match the selected storage. Continue with revert?')) {
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // Update remote storage with the target version's data
+      await axios.put(apiUrl, target.data, {
+        params: {
+          apiKey: apiKeyFromUrl || state.apiKey,
+        },
+      });
+
+      // Get current versions for the URL
+      const currentVersions = state.versionsByURL[state.url] || [];
+
+      // Check if the target data is the same as the most recent version
+      const isDataUnchanged = currentVersions.length > 0 &&
+                              areJsonEqual(target.data, currentVersions[0].data);
+
+      if (isDataUnchanged) {
+        // Just set currentData without changing version history
+        setState(prev => ({
+          ...prev,
+          currentData: target.data,
+          apiKey: apiKeyFromUrl || prev.apiKey,
+        }));
+        toast.success('Reverted successfully (no changes to version history)');
+      } else {
+        const newVersion: JsonVersion = {
+          timestamp: new Date().toISOString(),
+          data: target.data,
+        };
+
+        // Update currentData and prepend the reverted version to history
+        setState(prev => ({
+          ...prev,
+          currentData: target.data,
+          versionsByURL: {
+            ...prev.versionsByURL,
+            [state.url]: [newVersion, ...currentVersions],
+          },
+          apiKey: apiKeyFromUrl || prev.apiKey,
+        }));
+        toast.success('Reverted successfully');
+      }
+
+      // Update the active storage ID to match the current URL
+      if (matchingStorage) {
+        setActiveStorageId(matchingStorage.id);
+      }
+    } catch (error) {
+      toast.error('Failed to revert to selected version');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const saveCurrentStorage = () => {
     // Don't allow saving while loading
     if (isLoading) {
@@ -878,16 +964,28 @@ function App() {
                           <Clock size={16} />
                           {new Date(version.timestamp).toLocaleString()}
                         </div>
-                        <button
-                          onClick={() => handleVersionSelect(index)}
-                          className={`${
-                            selectedVersions.includes(index)
-                              ? 'bg-indigo-600 text-white'
-                              : 'text-indigo-600 hover:text-indigo-800'
-                          } px-3 py-1 rounded-md transition-colors`}
-                        >
-                          {selectedVersions.includes(index) ? 'Selected' : 'Select'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleVersionSelect(index)}
+                            className={`${
+                              selectedVersions.includes(index)
+                                ? 'bg-indigo-600 text-white'
+                                : 'text-indigo-600 hover:text-indigo-800'
+                            } px-3 py-1 rounded-md transition-colors`}
+                          >
+                            {selectedVersions.includes(index) ? 'Selected' : 'Select'}
+                          </button>
+                          <button
+                            onClick={() => revertToVersion(index)}
+                            disabled={isLoading}
+                            className={`px-3 py-1 rounded-md ${
+                              isLoading ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'
+                            }`}
+                            title="Revert storage to this version"
+                          >
+                            Revert
+                          </button>
+                        </div>
                       </div>
 
                       {showDiff &&
